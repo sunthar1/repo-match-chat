@@ -1,0 +1,118 @@
+import type { RankedRepo, RepoSearchResult } from "@/lib/github";
+
+function fallbackRank(requirement: string, repos: RepoSearchResult[]): { summary: string; keywords: string[]; repos: RankedRepo[] } {
+  const keywords = [...new Set(requirement.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word.length > 2))].slice(0, 6);
+
+  const scored = repos.map((repo) => {
+    const text = `${repo.full_name} ${repo.description || ""} ${repo.language || ""} ${repo.topics.join(" ")}`.toLowerCase();
+    let score = 0;
+    for (const keyword of keywords) {
+      if (text.includes(keyword)) score += 18;
+    }
+    if (repo.language && requirement.toLowerCase().includes(repo.language.toLowerCase())) score += 10;
+    if (repo.stargazers_count > 1000) score += 8;
+    if (repo.description) score += 6;
+
+    return {
+      ...repo,
+      score: Math.min(99, score),
+      reason: `Strong keyword and metadata alignment for: ${keywords.slice(0, 3).join(", ") || "the requested stack"}.`,
+    };
+  });
+
+  const sorted = scored.sort((a, b) => b.score - a.score).slice(0, 5);
+
+  return {
+    summary: `I found ${sorted.length} repositories that most closely match your requirement: ${requirement}.`,
+    keywords,
+    repos: sorted,
+  };
+}
+
+export async function rankReposAgainstRequirement(
+  requirement: string,
+  repos: RepoSearchResult[],
+): Promise<{ summary: string; keywords: string[]; repos: RankedRepo[] }> {
+  if (!repos.length) {
+    return {
+      summary: "I couldn’t find any GitHub repositories matching that requirement.",
+      keywords: [],
+      repos: [],
+    };
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY || process.env.AI_API_KEY;
+  const baseUrl = process.env.OPENAI_BASE_URL || process.env.OLLAMA_BASE_URL || "https://api.openai.com/v1";
+  const modelName = process.env.OPENAI_MODEL || process.env.OLLAMA_MODEL || "gpt-4o-mini";
+
+  const prompt = `You are a GitHub repository matching assistant. Rank these repositories against the user's requirement and return valid JSON only with this exact structure:
+{
+  "summary": "short explanation",
+  "keywords": ["keyword1", "keyword2"],
+  "repos": [{ "full_name": "owner/repo", "score": 92, "reason": "why it matches" }]
+}
+
+User requirement:
+${requirement}
+
+Repositories:
+${repos
+  .map(
+    (repo) =>
+      `${repo.full_name} | language: ${repo.language || "unknown"} | description: ${repo.description || "no description"} | topics: ${repo.topics.join(", ") || "none"}`,
+  )
+  .join("\n")}
+`;
+
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: modelName,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+      }),
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`AI request failed with status ${response.status}`);
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+
+    const content = data.choices?.[0]?.message?.content || "";
+    const match = content.match(/```json\s*([\s\S]*?)```/i)?.[1] || content;
+    const parsed = JSON.parse(match);
+
+    const normalizedRepos = (parsed.repos || []).map((item: any) => {
+      const matchedRepo = repos.find((repo) => repo.full_name === item.full_name) || repos[0];
+      return {
+        ...matchedRepo,
+        score: Number(item.score || 0),
+        reason: String(item.reason || "Strong alignment with the requested requirements."),
+      };
+    });
+
+    const finalRepos = normalizedRepos.sort((a: RankedRepo, b: RankedRepo) => b.score - a.score).slice(0, 5);
+
+    return {
+      summary: String(parsed.summary || "Here are the strongest repository matches."),
+      keywords: Array.isArray(parsed.keywords) ? parsed.keywords.map(String) : [],
+      repos: finalRepos,
+    };
+  } catch {
+    return fallbackRank(requirement, repos);
+  }
+}
