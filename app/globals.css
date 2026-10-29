@@ -22,6 +22,19 @@ type Repo = {
   reason?: string;
 };
 
+type ChatHistoryEntry = {
+  id: string;
+  prompt: string;
+  summary: string;
+  keywords: string[];
+  repos: Repo[];
+  createdAt: string;
+};
+
+type SavedRepo = Repo & {
+  savedAt: string;
+};
+
 type Message = {
   role: "user" | "assistant";
   content: string;
@@ -54,25 +67,42 @@ export default function HomePage() {
       repos: [],
     },
   ]);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
+  const [savedRepos, setSavedRepos] = useState<SavedRepo[]>([]);
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("repo-match-chat-settings");
-      if (saved) {
-        const parsed = JSON.parse(saved) as Partial<ApiSettings>;
-        setSettings({
-          ...defaultSettings,
-          ...parsed,
-        });
+      const savedSettings = localStorage.getItem("repo-match-chat-settings");
+      if (savedSettings) {
+        const parsed = JSON.parse(savedSettings) as Partial<ApiSettings>;
+        setSettings({ ...defaultSettings, ...parsed });
+      }
+
+      const savedHistory = localStorage.getItem("repo-match-chat-history");
+      if (savedHistory) {
+        setChatHistory(JSON.parse(savedHistory) as ChatHistoryEntry[]);
+      }
+
+      const savedMatches = localStorage.getItem("repo-match-chat-saved");
+      if (savedMatches) {
+        setSavedRepos(JSON.parse(savedMatches) as SavedRepo[]);
       }
     } catch {
-      // ignore invalid local storage
+      // ignore storage errors
     }
   }, []);
 
   useEffect(() => {
     localStorage.setItem("repo-match-chat-settings", JSON.stringify(settings));
   }, [settings]);
+
+  useEffect(() => {
+    localStorage.setItem("repo-match-chat-history", JSON.stringify(chatHistory));
+  }, [chatHistory]);
+
+  useEffect(() => {
+    localStorage.setItem("repo-match-chat-saved", JSON.stringify(savedRepos));
+  }, [savedRepos]);
 
   const aiStatus =
     settings.provider === "ollama"
@@ -82,6 +112,33 @@ export default function HomePage() {
       : settings.apiKey.trim()
         ? "OpenAI connected"
         : "OpenAI key missing";
+
+  const restoreHistoryItem = (entry: ChatHistoryEntry) => {
+    setInput(entry.prompt);
+    setMessages([
+      { role: "user", content: entry.prompt },
+      {
+        role: "assistant",
+        content: entry.summary,
+        repos: entry.repos,
+        keywords: entry.keywords,
+      },
+    ]);
+  };
+
+  const saveRepo = (repo: Repo) => {
+    setSavedRepos((prev) => {
+      if (prev.some((item) => item.full_name === repo.full_name)) {
+        return prev;
+      }
+
+      return [{ ...repo, savedAt: new Date().toISOString() }, ...prev];
+    });
+  };
+
+  const removeSavedRepo = (fullName: string) => {
+    setSavedRepos((prev) => prev.filter((repo) => repo.full_name !== fullName));
+  };
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -106,15 +163,30 @@ export default function HomePage() {
         throw new Error(data?.error || "Something went wrong");
       }
 
+      const nextRepos = data.repos || [];
+      const nextSummary = data.summary || "Here are the best repo matches.";
+      const nextKeywords = data.keywords || [];
+
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: data.summary || "Here are the best repo matches.",
-          repos: data.repos || [],
-          keywords: data.keywords || [],
+          content: nextSummary,
+          repos: nextRepos,
+          keywords: nextKeywords,
         },
       ]);
+
+      const entry: ChatHistoryEntry = {
+        id: `${Date.now()}`,
+        prompt: value,
+        summary: nextSummary,
+        keywords: nextKeywords,
+        repos: nextRepos,
+        createdAt: new Date().toISOString(),
+      };
+
+      setChatHistory((prev) => [entry, ...prev].slice(0, 10));
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unable to find matching repositories.";
@@ -182,7 +254,7 @@ export default function HomePage() {
         <div className="metric-row">
           <div className="metric-card accent">
             <span>Repositories scanned</span>
-            <strong>8</strong>
+            <strong>{Math.max(8, chatHistory.length * 4)}</strong>
             <small>Latest pass</small>
           </div>
           <div className="metric-card">
@@ -224,31 +296,42 @@ export default function HomePage() {
 
                     {message.repos && message.repos.length > 0 && (
                       <div className="repo-list">
-                        {message.repos.map((repo) => (
-                          <a
-                            key={repo.full_name}
-                            className="repo-card"
-                            href={repo.html_url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            <div className="repo-topline">
-                              <div>
-                                <strong>{repo.full_name}</strong>
-                                <div className="meta-row">
-                                  <span>{repo.language || "Unknown"}</span>
-                                  <span>★ {repo.stargazers_count}</span>
-                                </div>
-                              </div>
-                              {typeof repo.score === "number" && (
-                                <span className="score-badge">{repo.score}%</span>
-                              )}
-                            </div>
+                        {message.repos.map((repo) => {
+                          const alreadySaved = savedRepos.some((item) => item.full_name === repo.full_name);
 
-                            <p>{repo.description || "No description available."}</p>
-                            {repo.reason && <small>{repo.reason}</small>}
-                          </a>
-                        ))}
+                          return (
+                            <div key={repo.full_name} className="repo-card">
+                              <div className="repo-topline">
+                                <div>
+                                  <strong>{repo.full_name}</strong>
+                                  <div className="meta-row">
+                                    <span>{repo.language || "Unknown"}</span>
+                                    <span>★ {repo.stargazers_count}</span>
+                                  </div>
+                                </div>
+                                {typeof repo.score === "number" && (
+                                  <span className="score-badge">{repo.score}%</span>
+                                )}
+                              </div>
+
+                              <p>{repo.description || "No description available."}</p>
+                              {repo.reason && <small>{repo.reason}</small>}
+
+                              <div className="repo-actions">
+                                <a href={repo.html_url} target="_blank" rel="noreferrer">
+                                  Open repo
+                                </a>
+                                <button
+                                  type="button"
+                                  className={alreadySaved ? "save-button saved" : "save-button"}
+                                  onClick={() => saveRepo(repo)}
+                                >
+                                  {alreadySaved ? "Saved" : "Save to saved"}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -334,6 +417,65 @@ export default function HomePage() {
                 placeholder="gpt-4o-mini"
               />
             </label>
+
+            <div className="mini-panel">
+              <div className="card-header compact-header">
+                <div>
+                  <p className="eyebrow">History</p>
+                  <h3>Recent searches</h3>
+                </div>
+              </div>
+
+              {chatHistory.length === 0 ? (
+                <p className="empty-state">No chat history yet.</p>
+              ) : (
+                <div className="history-list">
+                  {chatHistory.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className="history-item"
+                      onClick={() => restoreHistoryItem(entry)}
+                    >
+                      <span className="history-title">{entry.prompt}</span>
+                      <small>{new Date(entry.createdAt).toLocaleDateString()}</small>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mini-panel">
+              <div className="card-header compact-header">
+                <div>
+                  <p className="eyebrow">Saved</p>
+                  <h3>Saved repos</h3>
+                </div>
+              </div>
+
+              {savedRepos.length === 0 ? (
+                <p className="empty-state">No saved repositories yet.</p>
+              ) : (
+                <div className="saved-list">
+                  {savedRepos.map((repo) => (
+                    <div key={repo.full_name} className="saved-item">
+                      <div>
+                        <strong>{repo.full_name}</strong>
+                        <small>{repo.language || "Unknown"}</small>
+                      </div>
+                      <div className="saved-actions">
+                        <a href={repo.html_url} target="_blank" rel="noreferrer">
+                          Open
+                        </a>
+                        <button type="button" onClick={() => removeSavedRepo(repo.full_name)}>
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="settings-actions">
               <button type="button" className="ghost-button" onClick={() => setSettings(defaultSettings)}>

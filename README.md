@@ -1,152 +1,571 @@
-import type { ApiSettings, RankedRepo, RepoSearchResult } from "@/lib/github";
-
-function fallbackRank(
-  requirement: string,
-  repos: RepoSearchResult[],
-): { summary: string; keywords: string[]; repos: RankedRepo[] } {
-  const keywords = [
-    ...new Set(
-      requirement
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, " ")
-        .split(/\s+/)
-        .filter((word) => word.length > 2),
-    ),
-  ].slice(0, 6);
-
-  const scored = repos.map((repo) => {
-    const text = `${repo.full_name} ${repo.description || ""} ${repo.language || ""} ${repo.topics.join(" ")}`.toLowerCase();
-    let score = 0;
-
-    for (const keyword of keywords) {
-      if (text.includes(keyword)) score += 18;
-    }
-
-    if (repo.language && requirement.toLowerCase().includes(repo.language.toLowerCase())) {
-      score += 10;
-    }
-
-    if (repo.stargazers_count > 1000) score += 8;
-    if (repo.description) score += 6;
-
-    return {
-      ...repo,
-      score: Math.min(99, score),
-      reason: `Strong keyword and metadata alignment for: ${keywords.slice(0, 3).join(", ") || "the requested stack"}.`,
-    };
-  });
-
-  const sorted = scored.sort((a, b) => b.score - a.score).slice(0, 5);
-
-  return {
-    summary: `I found ${sorted.length} repositories that most closely match your requirement: ${requirement}.`,
-    keywords,
-    repos: sorted,
-  };
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  background: #07131f;
+  color: #e2e8f0;
 }
 
-function resolveBaseUrl(settings: ApiSettings = {}): string {
-  if (settings.baseUrl && settings.baseUrl.trim()) {
-    return settings.baseUrl.trim().replace(/\/$/, "");
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.dashboard-shell {
+  min-height: 100vh;
+  display: flex;
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.18), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 22%),
+    #07131f;
+}
+
+.sidebar {
+  width: 280px;
+  background: rgba(11, 20, 30, 0.96);
+  border-right: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 28px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0ea5e9, #2563eb);
+  font-weight: 800;
+  color: white;
+}
+
+.overline {
+  margin: 0 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+  color: #7dd3fc;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.4rem;
+}
+
+.nav-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nav-item {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.5);
+  color: #dfe6ee;
+  border-radius: 12px;
+  text-align: left;
+  padding: 12px 14px;
+  transition: 0.2s ease;
+}
+
+.nav-item.active {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.18), rgba(37, 99, 235, 0.12));
+  border-color: rgba(125, 211, 252, 0.32);
+}
+
+.status-panel {
+  margin-top: auto;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 16px;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.status-label {
+  display: block;
+  color: #94a3b8;
+  margin-bottom: 10px;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #dfe6ee;
+}
+
+.pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.7);
+}
+
+.workspace-panel {
+  flex: 1;
+  padding: 28px 28px 32px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+h1 {
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  color: #f8fafc;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ghost-button {
+  background: rgba(15, 23, 42, 0.7);
+  color: #dbeafe;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.metric-card {
+  padding: 18px 20px;
+  background: rgba(15, 23, 42, 0.76);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 18px;
+}
+
+.metric-card.accent {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.15), rgba(37, 99, 235, 0.12));
+}
+
+.metric-card span,
+.metric-card small {
+  display: block;
+  color: #94a3b8;
+}
+
+.metric-card strong {
+  display: block;
+  color: white;
+  margin: 10px 0 4px;
+  font-size: 1.8rem;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(300px, 420px);
+  gap: 18px;
+}
+
+.chat-panel,
+.settings-panel {
+  background: rgba(15, 23, 42, 0.76);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 22px;
+  padding: 18px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.compact-header {
+  margin-bottom: 12px;
+}
+
+.eyebrow {
+  margin-bottom: 5px;
+  color: #7dd3fc;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.chat-window {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 560px;
+  overflow: auto;
+  padding-right: 8px;
+}
+
+.message {
+  display: flex;
+}
+
+.message.user {
+  justify-content: flex-end;
+}
+
+.message.assistant {
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: min(760px, 100%);
+  border-radius: 18px;
+  padding: 16px 18px;
+  background: rgba(15, 118, 110, 0.13);
+  border: 1px solid rgba(94, 234, 212, 0.2);
+}
+
+.message.user .bubble {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(96, 165, 250, 0.26);
+}
+
+.bubble p {
+  margin: 0 0 12px;
+  line-height: 1.6;
+  color: #e2e8f0;
+}
+
+.keyword-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.keyword-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(147, 197, 253, 0.26);
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.1);
+  font-size: 0.74rem;
+}
+
+.repo-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.repo-card {
+  display: block;
+  padding: 14px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 16px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.repo-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.repo-topline strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #f8fafc;
+}
+
+.meta-row {
+  display: flex;
+  gap: 10px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.score-badge {
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  color: #bbf7d0;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+}
+
+.repo-card p {
+  margin: 10px 0 8px;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+
+.repo-card small {
+  color: #7dd3fc;
+  line-height: 1.5;
+}
+
+.repo-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.repo-actions a {
+  text-decoration: none;
+  color: #7dd3fc;
+  font-weight: 600;
+}
+
+.save-button {
+  border: 1px solid rgba(125, 211, 252, 0.25);
+  background: rgba(14, 116, 144, 0.15);
+  color: #dbeafe;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.save-button.saved {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(74, 222, 128, 0.25);
+  color: #bbf7d0;
+}
+
+.composer {
+  margin-top: 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding-top: 18px;
+}
+
+.composer textarea {
+  width: 100%;
+  min-height: 124px;
+  resize: vertical;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 16px;
+  padding: 16px 18px;
+  color: #f8fafc;
+}
+
+.controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+button[type="submit"],
+.settings-actions button:last-child {
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2563eb, #0ea5e9);
+  color: white;
+  padding: 12px 18px;
+  font-weight: 700;
+}
+
+.settings-panel {
+  transition: 0.25s ease;
+}
+
+.settings-panel.closed {
+  display: none;
+}
+
+.field-group {
+  display: block;
+  margin-bottom: 18px;
+}
+
+.field-group span {
+  display: block;
+  margin-bottom: 8px;
+  color: #cbd5e1;
+  font-size: 0.82rem;
+}
+
+.field-group input {
+  width: 100%;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: #f8fafc;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.segment {
+  background: rgba(15, 23, 42, 0.76);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: #dfe6ee;
+  border-radius: 12px;
+  padding: 10px 8px;
+}
+
+.segment.active {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.14), rgba(37, 99, 235, 0.18));
+  border-color: rgba(125, 211, 252, 0.32);
+}
+
+.mini-panel {
+  padding-top: 12px;
+  margin-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.history-list,
+.saved-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-item,
+.saved-item {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.52);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.history-item {
+  text-align: left;
+  color: #dfe6ee;
+}
+
+.history-title {
+  display: block;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+.history-item small,
+.saved-item small {
+  color: #94a3b8;
+}
+
+.saved-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.saved-item strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.saved-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.saved-actions a {
+  color: #7dd3fc;
+  text-decoration: none;
+  font-size: 0.82rem;
+}
+
+.saved-actions button {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.72);
+  color: #f8fafc;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.empty-state {
+  color: #94a3b8;
+  font-size: 0.82rem;
+  margin-top: 6px;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+@media (max-width: 980px) {
+  .dashboard-shell {
+    flex-direction: column;
   }
 
-  if (settings.provider === "ollama") {
-    return (process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1").replace(/\/$/, "");
+  .sidebar {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
   }
 
-  return (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
-}
-
-function resolveModel(settings: ApiSettings = {}): string {
-  return settings.model || process.env.OPENAI_MODEL || process.env.OLLAMA_MODEL || "gpt-4o-mini";
-}
-
-export async function rankReposAgainstRequirement(
-  requirement: string,
-  repos: RepoSearchResult[],
-  settings: ApiSettings = {},
-): Promise<{ summary: string; keywords: string[]; repos: RankedRepo[] }> {
-  if (!repos.length) {
-    return {
-      summary: "I couldn’t find any GitHub repositories matching that requirement.",
-      keywords: [],
-      repos: [],
-    };
-  }
-
-  const apiKey = settings.apiKey || process.env.OPENAI_API_KEY || process.env.AI_API_KEY;
-  const baseUrl = resolveBaseUrl(settings);
-  const modelName = resolveModel(settings);
-
-  const prompt = `You are a GitHub repository matching assistant. Rank these repositories against the user's requirement and return valid JSON only with this exact structure:
-{
-  "summary": "short explanation",
-  "keywords": ["keyword1", "keyword2"],
-  "repos": [{ "full_name": "owner/repo", "score": 92, "reason": "why it matches" }]
-}
-
-User requirement:
-${requirement}
-
-Repositories:
-${repos
-  .map(
-    (repo) =>
-      `${repo.full_name} | language: ${repo.language || "unknown"} | description: ${repo.description || "no description"} | topics: ${repo.topics.join(", ") || "none"}`,
-  )
-  .join("\n")}
-`;
-
-  try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-
-    if (apiKey) {
-      headers.Authorization = `Bearer ${apiKey}`;
-    }
-
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: modelName,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-      }),
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      throw new Error(`AI request failed with status ${response.status}`);
-    }
-
-    const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-
-    const content = data.choices?.[0]?.message?.content || "";
-    const match = content.match(/```json\s*([\s\S]*?)```/i)?.[1] || content;
-    const parsed = JSON.parse(match);
-
-    const normalizedRepos = (parsed.repos || []).map((item: any) => {
-      const matchedRepo = repos.find((repo) => repo.full_name === item.full_name) || repos[0];
-      return {
-        ...matchedRepo,
-        score: Number(item.score || 0),
-        reason: String(item.reason || "Strong alignment with the requested requirements."),
-      };
-    });
-
-    const finalRepos = normalizedRepos.sort((a: RankedRepo, b: RankedRepo) => b.score - a.score).slice(0, 5);
-
-    return {
-      summary: String(parsed.summary || "Here are the strongest repository matches."),
-      keywords: Array.isArray(parsed.keywords) ? parsed.keywords.map(String) : [],
-      repos: finalRepos,
-    };
-  } catch {
-    return fallbackRank(requirement, repos);
+  .workspace-grid {
+    grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 640px) {
+  .workspace-panel {
+    padding: 18px 16px 24px;
+  }
+
+  .metric-row {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .saved-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+
 
