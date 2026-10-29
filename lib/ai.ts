@@ -1,3 +1,13 @@
+export type ProviderType = "openai" | "ollama" | "auto";
+
+export type ApiSettings = {
+  githubToken?: string;
+  provider?: ProviderType;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+};
+
 export type RepoSearchResult = {
   full_name: string;
   description: string | null;
@@ -13,50 +23,56 @@ export type RankedRepo = RepoSearchResult & {
   reason: string;
 };
 
-function extractKeywords(requirement: string): string[] {
+export function buildGitHubQuery(requirement: string): string {
   const cleaned = requirement
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
+  if (!cleaned) return "starter";
+
   const tokens = cleaned.split(" ").filter((token) => token.length > 2);
-  return [...new Set(tokens)].slice(0, 6);
-}
-
-export function buildGitHubQuery(requirement: string): string {
-  const keywords = extractKeywords(requirement);
-  if (!keywords.length) return "open source";
-
   const preferredLanguage =
-    keywords.includes("python")
+    tokens.includes("python")
       ? "python"
-      : keywords.includes("javascript") || keywords.includes("node") || keywords.includes("typescript")
+      : tokens.includes("javascript") || tokens.includes("node") || tokens.includes("typescript")
         ? "javascript"
-        : keywords.includes("go")
+        : tokens.includes("go")
           ? "go"
-          : keywords.includes("rust")
+          : tokens.includes("rust")
             ? "rust"
             : "";
 
-  const baseQuery = keywords.join(" ");
-  return preferredLanguage ? `${baseQuery} language:${preferredLanguage}` : baseQuery;
+  const uniqueKeywords = [...new Set(tokens)].slice(0, 5);
+  const userQuery = uniqueKeywords.join(" ");
+
+  return preferredLanguage ? `${userQuery} language:${preferredLanguage}` : userQuery;
 }
 
-export async function searchGitHubRepos(requirement: string, limit = 6): Promise<RepoSearchResult[]> {
+export async function searchGitHubRepos(
+  requirement: string,
+  limit = 8,
+  settings: ApiSettings = {},
+): Promise<RepoSearchResult[]> {
   const query = buildGitHubQuery(requirement);
-  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}+in:name,description,readme&sort=stars&order=desc&per_page=${limit}`;
+  const url = new URL("https://api.github.com/search/repositories");
+  url.searchParams.set("q", `${query} in:name,description,readme`);
+  url.searchParams.set("sort", "stars");
+  url.searchParams.set("order", "desc");
+  url.searchParams.set("per_page", String(limit));
 
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "User-Agent": "repo-match-chat/1.0",
   };
 
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const token = settings.githubToken || process.env.GITHUB_TOKEN;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
+  const response = await fetch(url.toString(), {
     headers,
     cache: "no-store",
   });
@@ -79,3 +95,4 @@ export async function searchGitHubRepos(requirement: string, limit = 6): Promise
     topics: Array.isArray(item.topics) ? item.topics : [],
   }));
 }
+

@@ -1,67 +1,152 @@
-# Repo Match Chat
+import type { ApiSettings, RankedRepo, RepoSearchResult } from "@/lib/github";
 
-A deploy-ready web app that combines a GitHub search connector with an OpenAI-compatible or Ollama model to find repositories that best match a user's requirements.
+function fallbackRank(
+  requirement: string,
+  repos: RepoSearchResult[],
+): { summary: string; keywords: string[]; repos: RankedRepo[] } {
+  const keywords = [
+    ...new Set(
+      requirement
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((word) => word.length > 2),
+    ),
+  ].slice(0, 6);
 
-## Features
+  const scored = repos.map((repo) => {
+    const text = `${repo.full_name} ${repo.description || ""} ${repo.language || ""} ${repo.topics.join(" ")}`.toLowerCase();
+    let score = 0;
 
-- Chat-based user requirement input
-- GitHub repository search connector
-- OpenAI-compatible or Ollama-compatible AI ranking
-- Results panel showing top matching repositories
-- Environment-based configuration for deployment
+    for (const keyword of keywords) {
+      if (text.includes(keyword)) score += 18;
+    }
 
-## Tech stack
+    if (repo.language && requirement.toLowerCase().includes(repo.language.toLowerCase())) {
+      score += 10;
+    }
 
-- Next.js
-- React
-- GitHub REST API
-- OpenAI-compatible AI API or Ollama
+    if (repo.stargazers_count > 1000) score += 8;
+    if (repo.description) score += 6;
 
-## Local setup
+    return {
+      ...repo,
+      score: Math.min(99, score),
+      reason: `Strong keyword and metadata alignment for: ${keywords.slice(0, 3).join(", ") || "the requested stack"}.`,
+    };
+  });
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+  const sorted = scored.sort((a, b) => b.score - a.score).slice(0, 5);
 
-2. Copy the environment template:
-   ```bash
-   cp .env.example .env.local
-   ```
+  return {
+    summary: `I found ${sorted.length} repositories that most closely match your requirement: ${requirement}.`,
+    keywords,
+    repos: sorted,
+  };
+}
 
-3. Fill in values:
-   ```bash
-   GITHUB_TOKEN=your_github_token_optional
-   OPENAI_API_KEY=your_key_if_using_openai
-   OPENAI_BASE_URL=https://api.openai.com/v1
-   OPENAI_MODEL=gpt-4o-mini
-   OLLAMA_BASE_URL=http://localhost:11434/v1
-   OLLAMA_MODEL=llama3.1
-   ```
+function resolveBaseUrl(settings: ApiSettings = {}): string {
+  if (settings.baseUrl && settings.baseUrl.trim()) {
+    return settings.baseUrl.trim().replace(/\/$/, "");
+  }
 
-4. Start the app:
-   ```bash
-   npm run dev
-   ```
+  if (settings.provider === "ollama") {
+    return (process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1").replace(/\/$/, "");
+  }
 
-5. Open `http://localhost:3000`
+  return (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+}
 
-## Deployment
+function resolveModel(settings: ApiSettings = {}): string {
+  return settings.model || process.env.OPENAI_MODEL || process.env.OLLAMA_MODEL || "gpt-4o-mini";
+}
 
-This app is ready for deployment on Vercel or any Node-compatible host.
+export async function rankReposAgainstRequirement(
+  requirement: string,
+  repos: RepoSearchResult[],
+  settings: ApiSettings = {},
+): Promise<{ summary: string; keywords: string[]; repos: RankedRepo[] }> {
+  if (!repos.length) {
+    return {
+      summary: "I couldn’t find any GitHub repositories matching that requirement.",
+      keywords: [],
+      repos: [],
+    };
+  }
 
-- Set the same environment variables in your deployment platform.
-- For Vercel: add the variables in Project Settings > Environment Variables.
-- For Ollama: run Ollama locally and expose the OpenAI-compatible API at `/v1`.
+  const apiKey = settings.apiKey || process.env.OPENAI_API_KEY || process.env.AI_API_KEY;
+  const baseUrl = resolveBaseUrl(settings);
+  const modelName = resolveModel(settings);
 
-## How it works
+  const prompt = `You are a GitHub repository matching assistant. Rank these repositories against the user's requirement and return valid JSON only with this exact structure:
+{
+  "summary": "short explanation",
+  "keywords": ["keyword1", "keyword2"],
+  "repos": [{ "full_name": "owner/repo", "score": 92, "reason": "why it matches" }]
+}
 
-1. User enters a requirement such as "I need a React app with authentication and charts".
-2. The app searches GitHub repositories using the GitHub Search API.
-3. The AI model ranks the repositories based on relevance to the requirement.
-4. The strongest matches are displayed in the UI with details and reasons.
+User requirement:
+${requirement}
 
-## Notes
+Repositories:
+${repos
+  .map(
+    (repo) =>
+      `${repo.full_name} | language: ${repo.language || "unknown"} | description: ${repo.description || "no description"} | topics: ${repo.topics.join(", ") || "none"}`,
+  )
+  .join("\n")}
+`;
 
-- GitHub API requests work without a token for public repositories, but a token improves rate limits.
-- If no AI API key is provided, the app falls back to a best-effort heuristic ranking.
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: modelName,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+      }),
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`AI request failed with status ${response.status}`);
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+
+    const content = data.choices?.[0]?.message?.content || "";
+    const match = content.match(/```json\s*([\s\S]*?)```/i)?.[1] || content;
+    const parsed = JSON.parse(match);
+
+    const normalizedRepos = (parsed.repos || []).map((item: any) => {
+      const matchedRepo = repos.find((repo) => repo.full_name === item.full_name) || repos[0];
+      return {
+        ...matchedRepo,
+        score: Number(item.score || 0),
+        reason: String(item.reason || "Strong alignment with the requested requirements."),
+      };
+    });
+
+    const finalRepos = normalizedRepos.sort((a: RankedRepo, b: RankedRepo) => b.score - a.score).slice(0, 5);
+
+    return {
+      summary: String(parsed.summary || "Here are the strongest repository matches."),
+      keywords: Array.isArray(parsed.keywords) ? parsed.keywords.map(String) : [],
+      repos: finalRepos,
+    };
+  } catch {
+    return fallbackRank(requirement, repos);
+  }
+}
+

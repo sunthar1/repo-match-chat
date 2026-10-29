@@ -1,232 +1,352 @@
-html, body {
-  margin: 0;
-  padding: 0;
-  font-family: Arial, Helvetica, sans-serif;
-  background: linear-gradient(135deg, #0f172a 0%, #111827 40%, #1f2937 100%);
-  color: #f8fafc;
-}
+"use client";
 
-* {
-  box-sizing: border-box;
-}
+import { FormEvent, useEffect, useState } from "react";
 
-button, textarea {
-  font: inherit;
-}
+type ProviderType = "openai" | "ollama" | "auto";
 
-.page-shell {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 20px;
-}
+type ApiSettings = {
+  githubToken: string;
+  provider: ProviderType;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+};
 
-.app-card {
-  width: min(1100px, 100%);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(15, 23, 42, 0.7);
-  backdrop-filter: blur(10px);
-  border-radius: 24px;
-  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.45);
-  padding: 24px;
-}
+type Repo = {
+  full_name: string;
+  description: string | null;
+  html_url: string;
+  language: string | null;
+  stargazers_count: number;
+  score?: number;
+  reason?: string;
+};
 
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
-}
+type Message = {
+  role: "user" | "assistant";
+  content: string;
+  repos?: Repo[];
+  keywords?: string[];
+};
 
-.eyebrow {
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #7dd3fc;
-  margin: 0 0 8px;
-}
+const defaultSettings: ApiSettings = {
+  githubToken: "",
+  provider: "openai",
+  apiKey: "",
+  baseUrl: "https://api.openai.com/v1",
+  model: "gpt-4o-mini",
+};
 
-h1 {
-  margin: 0;
-  font-size: clamp(2rem, 5vw, 3rem);
-}
+const starterPrompt =
+  "I need a React dashboard with authentication, charts, and a clean admin UI for a SaaS app.";
 
-.tag-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
+export default function HomePage() {
+  const [input, setInput] = useState(starterPrompt);
+  const [loading, setLoading] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(true);
+  const [settings, setSettings] = useState<ApiSettings>(defaultSettings);
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      role: "assistant",
+      content:
+        "I can look through GitHub repositories and rank the best matches for your project requirements.",
+      keywords: ["React", "dashboard", "auth", "charts", "SaaS"],
+      repos: [],
+    },
+  ]);
 
-.tag-group span {
-  border: 1px solid rgba(125, 211, 252, 0.5);
-  background: rgba(14, 116, 144, 0.18);
-  color: #bae6fd;
-  border-radius: 999px;
-  padding: 8px 12px;
-  font-size: 0.82rem;
-}
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("repo-match-chat-settings");
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<ApiSettings>;
+        setSettings({
+          ...defaultSettings,
+          ...parsed,
+        });
+      }
+    } catch {
+      // ignore invalid local storage
+    }
+  }, []);
 
-.chat-window {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  max-height: 65vh;
-  overflow: auto;
-  padding-right: 8px;
-}
+  useEffect(() => {
+    localStorage.setItem("repo-match-chat-settings", JSON.stringify(settings));
+  }, [settings]);
 
-.message {
-  display: flex;
-}
+  const aiStatus =
+    settings.provider === "ollama"
+      ? settings.baseUrl.trim()
+        ? "Ollama connected"
+        : "Ollama not configured"
+      : settings.apiKey.trim()
+        ? "OpenAI connected"
+        : "OpenAI key missing";
 
-.message.user {
-  justify-content: flex-end;
-}
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const value = input.trim();
+    if (!value || loading) return;
 
-.message.assistant {
-  justify-content: flex-start;
-}
+    setLoading(true);
+    setMessages((prev) => [...prev, { role: "user", content: value }]);
 
-.bubble {
-  max-width: min(780px, 90%);
-  background: rgba(15, 118, 110, 0.2);
-  border: 1px solid rgba(94, 234, 212, 0.2);
-  border-radius: 20px;
-  padding: 18px 18px 14px;
-}
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message: value, settings }),
+      });
 
-.message.user .bubble {
-  background: rgba(59, 130, 246, 0.18);
-  border-color: rgba(96, 165, 250, 0.25);
-}
+      const data = await response.json();
 
-.bubble p {
-  margin: 0 0 12px;
-  line-height: 1.6;
-  color: #e2e8f0;
-}
+      if (!response.ok) {
+        throw new Error(data?.error || "Something went wrong");
+      }
 
-.keyword-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.keyword-pill {
-  display: inline-flex;
-  align-items: center;
-  background: rgba(59, 130, 246, 0.12);
-  color: #bfdbfe;
-  border: 1px solid rgba(147, 197, 253, 0.35);
-  padding: 6px 10px;
-  border-radius: 999px;
-  font-size: 0.8rem;
-}
-
-.repo-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
-}
-
-.repo-card {
-  display: block;
-  padding: 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: rgba(15, 23, 42, 0.7);
-  text-decoration: none;
-  color: inherit;
-}
-
-.repo-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.repo-header strong {
-  display: block;
-  color: #f8fafc;
-  margin-bottom: 8px;
-}
-
-.meta-row {
-  display: flex;
-  gap: 10px;
-  color: #94a3b8;
-  font-size: 0.8rem;
-}
-
-.score-badge {
-  border-radius: 999px;
-  background: rgba(34, 197, 94, 0.16);
-  border: 1px solid rgba(74, 222, 128, 0.3);
-  color: #bbf7d0;
-  padding: 6px 10px;
-  font-size: 0.75rem;
-}
-
-.repo-card p {
-  margin: 10px 0 8px;
-  color: #cbd5e1;
-  font-size: 0.9rem;
-}
-
-.repo-card small {
-  color: #7dd3fc;
-  line-height: 1.5;
-}
-
-.composer {
-  margin-top: 24px;
-  border-top: 1px solid rgba(148, 163, 184, 0.2);
-  padding-top: 18px;
-}
-
-.composer textarea {
-  width: 100%;
-  resize: vertical;
-  min-height: 120px;
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: rgba(15, 23, 42, 0.8);
-  color: #f8fafc;
-  padding: 16px 18px;
-}
-
-.controls {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
-}
-
-button {
-  border: 0;
-  border-radius: 12px;
-  padding: 12px 20px;
-  background: linear-gradient(135deg, #2563eb, #0ea5e9);
-  color: white;
-  cursor: pointer;
-  font-weight: 700;
-}
-
-button:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
-
-@media (max-width: 720px) {
-  .topbar {
-    flex-direction: column;
-    align-items: flex-start;
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: data.summary || "Here are the best repo matches.",
+          repos: data.repos || [],
+          keywords: data.keywords || [],
+        },
+      ]);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to find matching repositories.";
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `I hit an error: ${message}`,
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  .app-card {
-    padding: 18px;
-  }
+  return (
+    <main className="dashboard-shell">
+      <aside className="sidebar">
+        <div className="brand-block">
+          <div className="brand-mark">RM</div>
+          <div>
+            <p className="overline">Enterprise AI</p>
+            <h2>Repo Match</h2>
+          </div>
+        </div>
+
+        <nav className="nav-stack" aria-label="Main navigation">
+          <button className="nav-item active" type="button">
+            Workspace
+          </button>
+          <button className="nav-item" type="button">
+            Discoveries
+          </button>
+          <button className="nav-item" type="button">
+            Saved matches
+          </button>
+          <button className="nav-item" type="button" onClick={() => setSettingsOpen((prev) => !prev)}>
+            Connector settings
+          </button>
+        </nav>
+
+        <div className="status-panel">
+          <span className="status-label">System status</span>
+          <div className="status-row">
+            <span className="pulse" />
+            <span>{aiStatus}</span>
+          </div>
+        </div>
+      </aside>
+
+      <section className="workspace-panel">
+        <header className="topbar">
+          <div>
+            <p className="overline">AI repository discovery</p>
+            <h1>Requirements-to-repo matching</h1>
+          </div>
+
+          <div className="topbar-actions">
+            <button className="ghost-button" type="button" onClick={() => setSettingsOpen((prev) => !prev)}>
+              API settings
+            </button>
+          </div>
+        </header>
+
+        <div className="metric-row">
+          <div className="metric-card accent">
+            <span>Repositories scanned</span>
+            <strong>8</strong>
+            <small>Latest pass</small>
+          </div>
+          <div className="metric-card">
+            <span>Best match score</span>
+            <strong>96%</strong>
+            <small>Semantic alignment</small>
+          </div>
+          <div className="metric-card">
+            <span>Active provider</span>
+            <strong>{settings.provider === "ollama" ? "Ollama" : "OpenAI"}</strong>
+            <small>{settings.model || "model ready"}</small>
+          </div>
+        </div>
+
+        <div className="workspace-grid">
+          <div className="chat-panel">
+            <div className="card-header">
+              <div>
+                <p className="eyebrow">Prompt</p>
+                <h3>Describe your project</h3>
+              </div>
+            </div>
+
+            <div className="chat-window">
+              {messages.map((message, index) => (
+                <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
+                  <div className="bubble">
+                    <p>{message.content}</p>
+
+                    {message.keywords && message.keywords.length > 0 && (
+                      <div className="keyword-row">
+                        {message.keywords.map((keyword) => (
+                          <span key={keyword} className="keyword-pill">
+                            {keyword}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {message.repos && message.repos.length > 0 && (
+                      <div className="repo-list">
+                        {message.repos.map((repo) => (
+                          <a
+                            key={repo.full_name}
+                            className="repo-card"
+                            href={repo.html_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <div className="repo-topline">
+                              <div>
+                                <strong>{repo.full_name}</strong>
+                                <div className="meta-row">
+                                  <span>{repo.language || "Unknown"}</span>
+                                  <span>★ {repo.stargazers_count}</span>
+                                </div>
+                              </div>
+                              {typeof repo.score === "number" && (
+                                <span className="score-badge">{repo.score}%</span>
+                              )}
+                            </div>
+
+                            <p>{repo.description || "No description available."}</p>
+                            {repo.reason && <small>{repo.reason}</small>}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={handleSubmit} className="composer">
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                rows={4}
+                placeholder="Describe the project you need, for example: 'I need a Python service with Stripe billing and a React frontend'"
+              />
+              <div className="controls">
+                <button type="submit" disabled={loading}>
+                  {loading ? "Searching..." : "Find matching repos"}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <aside className={`settings-panel ${settingsOpen ? "open" : "closed"}`}>
+            <div className="card-header">
+              <div>
+                <p className="eyebrow">Configuration</p>
+                <h3>API connectors</h3>
+              </div>
+            </div>
+
+            <label className="field-group">
+              <span>GitHub token</span>
+              <input
+                type="password"
+                value={settings.githubToken}
+                onChange={(e) =>
+                  setSettings((prev) => ({ ...prev, githubToken: e.target.value }))
+                }
+                placeholder="ghp_..."
+              />
+            </label>
+
+            <div className="field-group">
+              <span>AI provider</span>
+              <div className="segmented-control">
+                {(["openai", "ollama", "auto"] as ProviderType[]).map((provider) => (
+                  <button
+                    key={provider}
+                    type="button"
+                    className={settings.provider === provider ? "segment active" : "segment"}
+                    onClick={() => setSettings((prev) => ({ ...prev, provider }))}
+                  >
+                    {provider === "auto" ? "Auto" : provider === "openai" ? "OpenAI" : "Ollama"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <label className="field-group">
+              <span>AI API key</span>
+              <input
+                type="password"
+                value={settings.apiKey}
+                onChange={(e) => setSettings((prev) => ({ ...prev, apiKey: e.target.value }))}
+                placeholder="sk-..."
+              />
+            </label>
+
+            <label className="field-group">
+              <span>AI base URL</span>
+              <input
+                value={settings.baseUrl}
+                onChange={(e) => setSettings((prev) => ({ ...prev, baseUrl: e.target.value }))}
+                placeholder="https://api.openai.com/v1"
+              />
+            </label>
+
+            <label className="field-group">
+              <span>Model name</span>
+              <input
+                value={settings.model}
+                onChange={(e) => setSettings((prev) => ({ ...prev, model: e.target.value }))}
+                placeholder="gpt-4o-mini"
+              />
+            </label>
+
+            <div className="settings-actions">
+              <button type="button" className="ghost-button" onClick={() => setSettings(defaultSettings)}>
+                Reset
+              </button>
+              <button type="button" onClick={() => setSettingsOpen(false)}>
+                Save & close
+              </button>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  );
 }
+

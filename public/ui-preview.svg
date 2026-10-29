@@ -1,0 +1,68 @@
+# Repo Match Chat
+
+A deploy-ready enterprise-looking web app for matching user requirements to GitHub repositories using a GitHub connector and an OpenAI-compatible or Ollama-compatible AI model.
+
+## Features
+
+- Chat-based requirement input
+- GitHub repository discovery and ranking
+- API settings configured directly inside the app UI
+- OpenAI-compatible and Ollama-compatible providers
+- Enterprise-style dark dashboard design
+- Saved settings in the browser local storage
+
+## Tech stack
+
+- Next.js
+- React
+- GitHub REST API
+- OpenAI-compatible APIs
+- Ollama-compatible local model endpoints
+
+## Local development
+
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+2. Start the app:
+   ```bash
+   npm run dev
+   ```
+
+3. Open `http://localhost:3000`
+
+## UI API configuration
+
+Use the API Settings panel in the application itself to configure:
+
+- GitHub token
+- AI provider (OpenAI / Ollama / Auto)
+- AI API key
+- AI base URL
+- Model name
+
+These values are stored in browser local storage for convenience.
+
+## Environment variables
+
+You can also set defaults for deployment and server-side use:
+
+```bash
+GITHUB_TOKEN=
+OPENAI_API_KEY=
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3.1
+```
+
+## Deployment
+
+This app is designed to be deployable on Vercel, Render, or any Node-compatible hosting platform.
+
+## App preview
+
+A UI preview is included at `public/ui-preview.svg`.
+
